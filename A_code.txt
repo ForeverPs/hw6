@@ -1,0 +1,148 @@
+import cv2
+import math
+import numpy as np
+from skimage import filters
+import matplotlib.pyplot as plt
+from skimage.morphology import disk
+
+class Restoration(object):
+
+	def __init__(self, path = 'lena.bmp'):
+		self.img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+		self.row = np.shape(self.img)[0]
+		self.col = np.shape(self.img)[1]
+		self.size = self.row * self.col
+
+	def n_gaussian(self, img):
+		print('-' * 30 + '\n' + 13 * ' ' + 'GAUSSIAN\n' + '-' * 30)
+		me = float(input('Mean  : '))
+		sigma = float(input('Sigma : '))
+		np.random.seed(0)
+		noise = np.random.normal(me, sigma, np.shape(img)[0] * np.shape(img)[1]).reshape((np.shape(img)[0], np.shape(img)[1]))
+		return (img + noise)
+
+	def n_pepper_salt(self):
+		print('-' * 30 + '\n' + 8 * ' ' + 'Pepper & Salt\n' + '-' * 30)
+		pa = float(input('Pepper : '))
+		pb = float(input('Salt   : '))
+		temp = self.img.copy()
+		np.random.seed(0)
+		noise = np.random.rand(self.size).reshape((self.row, self.col))
+		temp[noise <= pa] = 0
+		temp[noise >= 1 - pb] = 255
+		return temp
+
+	def sport_blur(self, img):
+		print('\n' + '-' * 30 + '\n' + 8 * ' ' + 'Sport Blur\n' + '-' * 30)
+		a = float(input('a : '))
+		b = float(input('b : '))
+		t = float(input('T : '))
+		temp = np.fft.fft2(img)
+		x, y = [i for i in range(1,np.shape(temp)[0] + 1)], [i for i in range(1,np.shape(temp)[1] + 1)]
+		X,Y=np.meshgrid(x,y)
+		h = (t / np.pi / (a*X+b*Y) * np.sin(np.pi * (a*X+b*Y)) * np.exp(-1j * math.pi * (a*X+b*Y))).T
+		p = np.abs(np.fft.ifft2(temp * h))
+		return p, h
+
+	def am(self, img, size):
+		assert isinstance(size, list) and len(size) == 2, 'Expect a list of filter size'
+		filters = np.ones((size[0], size[1])) / (size[0] * size[1])
+		re = cv2.filter2D(img,-1,filters)
+		return re.astype(int)
+
+	def gm(self, img, size):
+		assert isinstance(size, list) and len(size) == 2, 'Expect a list of filter size'
+		temp = np.pad(img, ((size[0]-1, size[0]-1), (size[1]-1, size[1]-1)), 'symmetric')
+		re = np.zeros(np.shape(temp))
+		for i in range(size[0] - 2, size[0] + self.row):
+			for j in range(size[1] - 2, size[1] + self.col):
+				mul, count = 1, 0
+				for ele in temp[i-1:i+2,j-1:j+2].reshape((size[0] * size[1], 1)):
+					if ele != 0 and ele != 255:
+						mul *= float(ele)
+						count += 1
+				re[i, j] = abs(mul) ** (1 / count)
+		return re.astype(int)
+
+	def median(self, img, size):
+		assert isinstance(size, list) and len(size) == 2, 'Expect a list of filter size'
+		temp = np.pad(img, ((size[0]-1, size[0]-1), (size[1]-1, size[1]-1)), 'symmetric')
+		re = np.zeros(np.shape(temp))
+		for i in range(size[0] - 2, size[0] - 1 + self.row):
+			for j in range(size[1] - 2, size[1] - 1 + self.col):
+				re[i, j] = np.median(temp[i-1:i+2,j-1:j+2])
+		return re.astype(int)
+
+	def ch(self, img, size):
+		print('\n' + '-' * 30 + '\n' + 8 * ' ' + 'Contraharmonic\n' + '-' * 30)
+		assert isinstance(size, list) and len(size) == 2, 'Expect a list of filter size'
+		Q = float(input('Q : '))
+		temp = np.pad(img, ((size[0]-1, size[0]-1), (size[1]-1, size[1]-1)), 'symmetric')
+		re = np.zeros(np.shape(temp))
+		for i in range(size[0] - 2, size[0] - 1 + self.row):
+			for j in range(size[1] - 2, size[1] - 1 + self.col):
+				add1, add2 = 0, 0
+				for ele in temp[i-1:i+2,j-1:j+2].reshape((size[0] * size[1],)):
+					if ele != 0:
+						add1 += ele ** (Q+1)
+						add2 += ele ** Q
+				if add2 != 0:
+					re[i, j] = add1 / add2
+		return re[size[0] - 2:size[0] - 1 + self.row,size[1] - 2:size[1] - 1 + self.col].astype(int)
+
+	def wiener(self, img, h):
+		print('\nWiener Filter\n' + 30 * '-')
+		K = float(input('K : '))
+		temp = np.fft.fft2(img)
+		new = np.conj(h) / (np.abs(h)**2 + K)
+		re = np.abs(np.fft.ifft2(temp * new))
+		return re.astype(int)
+
+	def cls(self, img, h):
+		print('\nConstrained Least Squares Filter\n' + 30 * '-')
+		gamma = float(input('Gamma : '))
+		l = self.laplace(img.shape)
+		temp = np.fft.fft2(img)
+		new = np.conj(h) / (np.abs(h)**2 + gamma * np.abs(l)**2)
+		re = np.abs(np.fft.ifft2(temp * new))
+		return re.astype(int)
+
+	def laplace(self, size):
+		u, v = [i for i in range(size[0])], [i for i in range(size[1])]
+		U, V = np.meshgrid(u, v)
+		H = 4 * np.pi**2 * (U**2 + V**2)
+		return (1000 * H / H.max()).T
+
+	def draw(self, names, images, row, col):
+		assert isinstance(names, list) and isinstance(images, list), 'unexpected data type'
+		assert len(names) == len(images), 'dimension mismatch'
+		plt.figure('SHOW')
+		for i in range(len(names)):
+			plt.subplot(row, col, i+1)
+			plt.title(names[i])
+			plt.imshow(images[i], cmap='gray')
+		plt.show()
+
+if __name__ == '__main__':
+	r = Restoration()
+	img1 = r.img
+	b1, h1 = r.sport_blur(r.img)
+	r = Restoration('test.jpg')
+	img2 = r.img
+	b2, h2 = r.sport_blur(r.img)
+	#r.draw(['Original','Sport Blur','','Original','Sport Blur'],[img1,b1,img1,img2,b2],row=2,col=3)
+	b3 = r.n_gaussian(b1.copy())
+	b4 = r.n_gaussian(b2.copy())
+	while True:
+		#re1 = r.wiener(b3.copy(), h1)
+		#re2 = r.wiener(b4.copy(), h2)
+		re1 = r.cls(b3.copy(), h1)
+		re2 = r.cls(b4.copy(), h2)
+		r.draw(['Original','Sport Blur & Gaussian Noise', 'CLS','Original','Sport Blur & Gaussian Noise', 'CLS'],[img1,b3,re1,img2,b4,re2],row=2,col=3)
+	#img1 = r.n_gaussian()
+	#img1 = r.n_pepper_salt()
+	#re1 = r.ch(img1.copy(), [3,3])
+	#re1 = r.am(img1.copy(),[3,3])
+	#re2 = r.gm(img1.copy(),[3,3])
+	#re3 = r.median(img1.copy(),[3,3])
+	#r.draw(['NOISE','Arithmetic','','Geometric_Pro','Median'],[img1,re1,img1,re2,re3],row=2,col=3)
